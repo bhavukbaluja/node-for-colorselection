@@ -1,82 +1,79 @@
 const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
-const fs = require("fs");
-const os = require("os");
+const mongoose = require("mongoose");
+require("dotenv").config();
 
 const app = express();
-const PORT = 9090;
-const DATA_FILE = "./data.json";
+const PORT = process.env.PORT || 9090;
 
+// Middleware
 app.use(cors());
 app.use(bodyParser.json());
 
-// Load existing data
-const readData = () => {
-    if (!fs.existsSync(DATA_FILE)) return []; // If file doesn't exist, return empty array
-    const rawData = fs.readFileSync(DATA_FILE);
-    return JSON.parse(rawData);
-};
+// MongoDB Connection
+const MONGO_URI = process.env.MONGO_URI; // Use environment variable for security
+mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log("Connected to MongoDB"))
+  .catch(err => console.error("MongoDB connection error:", err));
 
-// Save new data
-const writeData = (data) => {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-};
+// Define Mongoose Schema
+const UserSchema = new mongoose.Schema({
+  name: String,
+  color: String
+});
+
+const User = mongoose.model("User", UserSchema);
 
 // API to get saved data
-app.get("/get-data", (req, res) => {
-  res.json(readData());
+app.get("/get-data", async (req, res) => {
+  try {
+    const users = await User.find();
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: "Error fetching data" });
+  }
 });
 
 // API to save user data
-app.post("/save-data", (req, res) => {
-    let data = readData();
-    
-    // Generate unique ID
-    const newId = data.length > 0 ? Math.max(...data.map(entry => entry.id)) + 1 : 1;
-    
-    const newEntry = { id: newId, name: req.body.name, color: req.body.color };
-    data.push(newEntry);
-    writeData(data);
-
-    res.json({ message: "Data saved successfully!", entry: newEntry });
+app.post("/save-data", async (req, res) => {
+  try {
+    const { name, color } = req.body;
+    const newUser = new User({ name, color });
+    await newUser.save();
+    res.json({ message: "Data saved successfully!", entry: newUser });
+  } catch (error) {
+    res.status(500).json({ error: "Error saving data" });
+  }
 });
 
 // API to reset data
-app.post("/reset-data", (req, res) => {
-  writeData([]);
-  res.json({ message: "Data reset successfully!" });
+app.post("/reset-data", async (req, res) => {
+  try {
+    await User.deleteMany({});
+    res.json({ message: "Data reset successfully!" });
+  } catch (error) {
+    res.status(500).json({ error: "Error resetting data" });
+  }
 });
 
-app.delete("/delete-data/:id", (req, res) => {
-    const id = parseInt(req.params.id); // Ensure ID is a number
-    let data = readData();
-    
-    // Filter out the entry
-    const updatedData = data.filter(entry => entry.id !== id);
-    
-    if (data.length === updatedData.length) {
-        return res.status(404).json({ message: "ID not found" });
+// API to delete an entry
+app.delete("/delete-data/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedUser = await User.findByIdAndDelete(id);
+
+    if (!deletedUser) {
+      return res.status(404).json({ message: "ID not found" });
     }
 
-    writeData(updatedData);
     res.json({ message: "Entry deleted successfully!" });
+  } catch (error) {
+    res.status(500).json({ error: "Error deleting entry" });
+  }
 });
 
-const getHostname = () => {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-      for (const net of interfaces[name]) {
-          if (net.family === "IPv4" && !net.internal) {
-              return net.address;
-          }
-      }
-  }
-  return "localhost"; // Fallback to localhost
-};
-
-// Print the running server URL dynamically
+// Start the server
 app.listen(PORT, () => {
-  const hostname = getHostname();
-  console.log(`Server running on http://${hostname}:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
